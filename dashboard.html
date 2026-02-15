@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SeatSync Smart Library</title>
+<link rel="stylesheet" href="dashboard.css">
+<script src="https://unpkg.com/html5-qrcode"></script>
+</head>
+<body>
+
+<header class="topbar">
+    <h1>SeatSync - Smart Library System</h1>
+</header>
+
+<div class="nav-buttons">
+    <button onclick="showSection('map')">Seat Map</button>
+    <button onclick="showSection('scanner')">QR Scanner</button>
+    <button onclick="showSection('admin')">Admin Dashboard</button>
+</div>
+
+<div id="mapSection" class="section active">
+    <h2>Library Seat Map</h2>
+    <div class="seat-grid" id="seatGrid"></div>
+</div>
+
+<!-- Booking Modal -->
+<div class="modal" id="bookingModal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal()">&times;</span>
+        <h3 id="seatTitle"></h3>
+
+        <label>Select Date</label>
+        <input type="date" id="datePicker">
+
+        <label>Select Time Slot</label>
+        <select id="timeSlot">
+            <option>8 AM - 10 AM</option>
+            <option>10 AM - 12 PM</option>
+            <option>12 PM - 2 PM</option>
+            <option>2 PM - 4 PM</option>
+            <option>4 PM - 6 PM</option>
+            <option>6 PM - 8 PM</option>
+        </select>
+
+        <button onclick="confirmBooking()">Confirm Booking</button>
+    </div>
+</div>
+
+<!-- Scanner Section -->
+<div id="scannerSection" class="section">
+    <h2>QR Seat Check-In</h2>
+
+    <div class="mode-toggle">
+        <button onclick="setMode('student')" id="studentBtn" class="active">Student Mode</button>
+        <button onclick="setMode('admin')" id="adminBtn">Admin Mode</button>
+    </div>
+
+    <div class="scanner-card">
+        <div id="reader"></div>
+        <div id="scanResult">Waiting for scan...</div>
+    </div>
+</div>
+
+<!-- Admin Dashboard Section -->
+<div id="adminSection" class="section">
+    <h2>Analytics Dashboard</h2>
+
+    <div class="dashboard">
+
+        <div class="card">
+            <h4>Total Seats</h4>
+            <p id="totalSeats">0</p>
+        </div>
+
+        <div class="card">
+            <h4>Available</h4>
+            <p id="availableSeats">0</p>
+        </div>
+
+        <div class="card">
+            <h4>Reserved</h4>
+            <p id="reservedSeats">0</p>
+        </div>
+
+        <div class="card">
+            <h4>Occupied</h4>
+            <p id="occupiedSeats">0</p>
+        </div>
+
+        <div class="card">
+            <h4>No-Show Penalties</h4>
+            <p id="penaltyCount">0</p>
+        </div>
+
+    </div>
+
+    <h3>Peak Hour Heatmap</h3>
+    <div class="heatmap" id="heatmap"></div>
+</div>
+
+<script>
+
+let totalSeats = 20;
+let selectedSeat = null;
+let mode = "student";
+
+/* -------- Navigation -------- */
+function showSection(section) {
+    document.querySelectorAll(".section").forEach(sec => sec.classList.remove("active"));
+
+    if(section === "map") document.getElementById("mapSection").classList.add("active");
+    if(section === "scanner") document.getElementById("scannerSection").classList.add("active");
+    if(section === "admin") {
+        document.getElementById("adminSection").classList.add("active");
+        loadDashboard();
+    }
+}
+
+/* -------- Seat Generation -------- */
+function loadSeats() {
+    const seatGrid = document.getElementById("seatGrid");
+    seatGrid.innerHTML = "";
+
+    for(let i=1; i<=totalSeats; i++){
+        let seat = document.createElement("div");
+        seat.classList.add("seat");
+        seat.innerText = i;
+
+        let seatData = JSON.parse(localStorage.getItem("seat_"+i));
+
+        if(seatData){
+            if(seatData.status === "reserved"){
+                seat.classList.add("reserved");
+                startTimer(i, seatData.time);
+            }
+            if(seatData.status === "occupied"){
+                seat.classList.add("occupied");
+            }
+        }
+
+        seat.onclick = () => {
+            if(!seat.classList.contains("reserved") && !seat.classList.contains("occupied")){
+                selectedSeat = i;
+                document.getElementById("seatTitle").innerText = "Book Seat " + i;
+                document.getElementById("bookingModal").style.display = "flex";
+            }
+        };
+
+        seatGrid.appendChild(seat);
+    }
+}
+
+/* -------- Booking Logic -------- */
+function confirmBooking(){
+
+    // 1 seat restriction
+    for(let i=1;i<=totalSeats;i++){
+        if(localStorage.getItem("seat_"+i)){
+            alert("You already have an active seat!");
+            return;
+        }
+    }
+
+    let seatData = {
+        status: "reserved",
+        time: Date.now()
+    };
+
+    localStorage.setItem("seat_"+selectedSeat, JSON.stringify(seatData));
+
+    closeModal();
+    loadSeats();
+}
+
+function closeModal(){
+    document.getElementById("bookingModal").style.display = "none";
+}
+
+/* -------- Auto Release Timer -------- */
+function startTimer(seatNumber, startTime){
+    let interval = setInterval(() => {
+        let now = Date.now();
+        let diff = 1800000 - (now - startTime); // 30 min
+
+        if(diff <= 0){
+            let penalty = parseInt(localStorage.getItem("penalty_count")) || 0;
+            localStorage.setItem("penalty_count", penalty + 1);
+            localStorage.removeItem("seat_"+seatNumber);
+            clearInterval(interval);
+            loadSeats();
+        }
+    },1000);
+}
+
+/* -------- QR Scanner -------- */
+function setMode(m){
+    mode = m;
+    document.getElementById("studentBtn").classList.remove("active");
+    document.getElementById("adminBtn").classList.remove("active");
+    if(mode==="student") document.getElementById("studentBtn").classList.add("active");
+    else document.getElementById("adminBtn").classList.add("active");
+}
+
+function onScanSuccess(decodedText){
+    let seatNumber = decodedText.replace("SEAT-","");
+    let seatData = JSON.parse(localStorage.getItem("seat_"+seatNumber));
+    let result = document.getElementById("scanResult");
+
+    if(mode==="student"){
+        if(seatData && seatData.status==="reserved"){
+            seatData.status="occupied";
+            localStorage.setItem("seat_"+seatNumber, JSON.stringify(seatData));
+            result.innerHTML="✅ Seat "+seatNumber+" Occupied";
+            setTimeout(()=>showSection("map"),2000);
+        } else {
+            result.innerHTML="❌ No active reservation";
+        }
+    }
+
+    if(mode==="admin"){
+        localStorage.removeItem("seat_"+seatNumber);
+        result.innerHTML="🛠 Admin Reset Seat "+seatNumber;
+    }
+
+    loadSeats();
+}
+
+new Html5QrcodeScanner("reader",{fps:10,qrbox:250}).render(onScanSuccess);
+
+/* -------- Dashboard -------- */
+function loadDashboard(){
+    let reserved=0;
+    let occupied=0;
+    let hourData={};
+
+    for(let i=1;i<=totalSeats;i++){
+        let data=JSON.parse(localStorage.getItem("seat_"+i));
+        if(data){
+            if(data.status==="reserved") reserved++;
+            if(data.status==="occupied") occupied++;
+            let hour=new Date(data.time).getHours();
+            hourData[hour]=(hourData[hour]||0)+1;
+        }
+    }
+
+    document.getElementById("totalSeats").innerText=totalSeats;
+    document.getElementById("availableSeats").innerText=totalSeats-reserved-occupied;
+    document.getElementById("reservedSeats").innerText=reserved;
+    document.getElementById("occupiedSeats").innerText=occupied;
+    document.getElementById("penaltyCount").innerText=localStorage.getItem("penalty_count")||0;
+
+    let heatmap=document.getElementById("heatmap");
+    heatmap.innerHTML="";
+    for(let i=0;i<24;i++){
+        let block=document.createElement("div");
+        block.classList.add("heat-block");
+        let value=hourData[i]||0;
+        block.style.opacity=0.2+(value*0.1);
+        block.innerText=i+":00";
+        heatmap.appendChild(block);
+    }
+}
+
+loadSeats();
+
+</script>
+
+</body>
+</html>
